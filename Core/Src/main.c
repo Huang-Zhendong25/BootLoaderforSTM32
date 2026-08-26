@@ -21,7 +21,6 @@
 #include "iwdg.h"
 #include "usart.h"
 #include "gpio.h"
-#include "bootloader.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -89,13 +88,15 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_IWDG_Init();
+  //MX_IWDG_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  
-  /* LED_ON;
-  HAL_Delay(1000); */
 
+  //uint8_t data1[5], data2 = 0xff;
+  LED_ON;
+  HAL_Delay(1000);
+//  uint8_t pdata[] = "12";
+//  HAL_UART_Transmit(&huart2, pdata, 2, HAL_MAX_DELAY);
   Bootloader_MainLoop();
   /* USER CODE END 2 */
 
@@ -103,12 +104,21 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    /* HAL_GPIO_WritePin(LED_STATE_GPIO_Port, LED_STATE_Pin, GPIO_PIN_SET);
+    HAL_UART_Receive(&huart2, data1, 5, HAL_MAX_DELAY);
+    if (data1[0] == 0x5a)
+    {
+      HAL_GPIO_WritePin(RS485_EN1_GPIO_Port, RS485_EN1_Pin, GPIO_PIN_SET);
+      HAL_UART_Transmit(&huart2, data1, 5, HAL_MAX_DELAY);
+      HAL_UART_Transmit(&huart2, &data2, 1, HAL_MAX_DELAY);
+      HAL_GPIO_WritePin(RS485_EN1_GPIO_Port, RS485_EN1_Pin, GPIO_PIN_RESET);
+      HAL_Delay(500);
+      HAL_GPIO_WritePin(LED_STATE_GPIO_Port, LED_STATE_Pin, GPIO_PIN_RESET);
+      HAL_Delay(500);
+    } */
+    
     /* USER CODE END WHILE */
-    /* HAL_IWDG_Refresh(&hiwdg);
-    HAL_GPIO_WritePin(LED_STATE_GPIO_Port, LED_STATE_Pin, GPIO_PIN_SET);
-    HAL_Delay(500);
-    HAL_GPIO_WritePin(LED_STATE_GPIO_Port, LED_STATE_Pin, GPIO_PIN_RESET);
-    HAL_Delay(500); */
+
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */

@@ -5,7 +5,7 @@
 
 static uint32_t cur_write_addr = APP_FLASH_STARTADDR;
 static uint32_t cur_total_len = 0;
-static uint8_t rx_buffer[RX_BUFFER_SIZE];
+//static uint8_t rx_buffer[RX_BUFFER_SIZE + 2];
 
 static void Flash_EraseApp(void)
 {
@@ -15,7 +15,7 @@ static void Flash_EraseApp(void)
     FLASH_EraseInitTypeDef erase_init = {
         .TypeErase = FLASH_TYPEERASE_PAGES,
         .PageAddress = page_start,
-        .NbPages = (page_start - page_end) / 1024 + 1
+        .NbPages = (page_end - page_start) / 1024 + 1
     };
     uint32_t erase_error = 0;
     HAL_FLASH_Unlock();
@@ -53,17 +53,19 @@ static bool Flash_WriteBuffer(uint32_t addr, uint8_t *data, uint32_t len)
 
 static void Bootloader_SendResponse(char *respText)
 {
-    HAL_UART_Transmit(&huart2, (uint8_t *)respText, strlen(respText), HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(RS485_EN1_GPIO_Port, RS485_EN1_Pin, GPIO_PIN_SET);
+    HAL_UART_Transmit(&huart2, (uint8_t *)respText, strlen(respText), 500);
+    HAL_GPIO_WritePin(RS485_EN1_GPIO_Port, RS485_EN1_Pin, GPIO_PIN_RESET);
 }
 
 static bool Bootloader_ReceiveData(uint8_t *data, uint16_t len, uint32_t timeout)
 {
-    uint32_t tick_start = HAL_GetTick();
-    uint16_t received_len = 0;
+    /* uint32_t tick_start = HAL_GetTick();
+    uint16_t received_len = 0; */
 
-    while (received_len < len)
+    /* while (received_len < len)
     {
-        HAL_IWDG_Refresh(&hiwdg);
+        //HAL_IWDG_Refresh(&hiwdg);
         if (HAL_GetTick() - tick_start > timeout)
         {
             return false;
@@ -73,8 +75,73 @@ static bool Bootloader_ReceiveData(uint8_t *data, uint16_t len, uint32_t timeout
             received_len += 1;
             tick_start = HAL_GetTick();
         }
+    } */
+   HAL_GPIO_WritePin(RS485_EN1_GPIO_Port, RS485_EN1_Pin, GPIO_PIN_RESET);
+    if (HAL_UART_Receive(&huart2, data, len, timeout) == HAL_OK)
+    {
+        return true;
     }
-    return true;
+    return false;
+}
+
+static bool Bootloader_ReceiveFrame(uint8_t *buffer, uint16_t *out_len, uint32_t timeout_ms)
+{
+    //uint32_t start_tick = HAL_GetTick();
+    uint16_t idx = 0;
+    uint8_t cmd;
+    uint8_t data_len;
+
+    HAL_GPIO_WritePin(RS485_EN1_GPIO_Port, RS485_EN1_Pin, GPIO_PIN_RESET);
+
+    while (1)
+    {
+        if (HAL_UART_Receive(&huart2, &buffer[idx], 1, 10) == HAL_OK)
+        {
+            idx += 1;
+            //start_tick = HAL_GetTick();
+
+            if (idx == 1)
+            {
+                cmd = buffer[0];
+                if (cmd == CMD_ABORT)
+                {
+                    *out_len = idx;
+                    return true;
+                }
+            }
+            /* else if (idx == 2)
+            {
+                data_len = buffer[1];
+            } */
+            else 
+            {
+                if (cmd == CMD_DATA)
+                {
+                    data_len = buffer[1];
+
+                    if (idx >= data_len + 2)   //cmd + len + firmware_data
+                    {
+                        *out_len = idx;
+                        return true;
+                    }
+                }
+                else if (cmd == CMD_END)
+                {
+                    if (idx >= 10)
+                    {
+                        *out_len = idx;
+                        return true;
+                    }
+                }
+                else
+                {}
+            }
+        }
+        /* if (HAL_GetTick() - start_tick > timeout_ms)
+        {
+            return false;
+        } */
+    }
 }
 
 static uint32_t Bootloader_CRC32(uint8_t *data, uint32_t len) {
@@ -117,6 +184,7 @@ void Bootloader_JumpToApp(void)
     uint32_t app_stack_top = *(__IO uint32_t *)APP_FLASH_STARTADDR;
 
     __disable_irq();
+    //__set_PRIMASK(1);
     SysTick->CTRL = 0;
     SysTick->LOAD = 0;
     SysTick->VAL = 0;
@@ -125,11 +193,18 @@ void Bootloader_JumpToApp(void)
         NVIC->ICER[i] = 0xffffffff;
         NVIC->ICPR[i] = 0xffffffff;
     }
+
     __enable_irq();
+    //__set_PRIMASK(0);
+
     HAL_UART_DeInit(&huart2);
     SCB->VTOR = APP_FLASH_STARTADDR;
+    __HAL_RCC_USART2_FORCE_RESET();     //Reset all Registers of USART2
+    __HAL_RCC_USART2_RELEASE_RESET();
+
     __set_MSP(app_stack_top);
     __set_CONTROL(0);
+    /* __ISB(); */
 
     typedef void (*pFunction)(void);
     pFunction jump_func = (pFunction)app_resetHandler;
@@ -141,103 +216,189 @@ void Bootloader_JumpToApp(void)
     }
 }
 
+//static bool Bootloader_Upgrade(void)
+//{
+//    uint8_t cmd;
+//    uint8_t data_len;    //maxlen = 256bytes
+//    uint32_t host_crc, host_size;
+//    uint32_t calc_crc;
+//
+//    bool data_received = false;
+//    uint32_t start_tick;
+//
+//    LED_ON;
+//    cur_write_addr = APP_FLASH_STARTADDR;
+//    cur_total_len = 0;
+//
+//    Flash_EraseApp();
+//    /* start_tick = HAL_GetTick(); */
+//
+//    while (1)
+//    {
+//        //HAL_IWDG_Refresh(&hiwdg);
+//
+//        /* if (!data_received && (HAL_GetTick() - start_tick > UPGRADE_WAIT_TIMEOUT_MS))
+//        {
+//            LED_OFF;
+//            return false;
+//        } */
+//
+//        if (!Bootloader_ReceiveData(rx_buffer, 128 + 2, 500))
+//        {
+//            continue;
+//        }
+//        //LED_ON;
+//        //Bootloader_ReceiveData(rx_buffer, 128 + 2, 500);
+//        data_received = true;
+//        cmd = rx_buffer[0];
+//        data_len = rx_buffer[1];
+//
+//        if (cmd == CMD_DATA)
+//        {
+//            /* if (!Bootloader_ReceiveData(&data_len, 1, 100))
+//            {
+//                Bootloader_SendResponse(RESP_LEN_FAIL);
+//                continue;
+//            } */
+//            if (data_len == 0 || data_len > RX_BUFFER_SIZE || (data_len % 4))
+//            {
+//                Bootloader_SendResponse(RESP_LEN_ERR);
+//                continue;
+//            }
+//            /* if (!Bootloader_ReceiveData(rx_buffer, data_len, 500))
+//            {
+//                Bootloader_SendResponse(RESP_DATA_FAIL);
+//                continue;
+//            } */
+//            if (!Flash_WriteBuffer(cur_write_addr, rx_buffer + 2, data_len))
+//            {
+//                Bootloader_SendResponse(RESP_WRITE_FAIL);
+//                continue;
+//            }
+//            cur_write_addr += data_len;
+//            cur_total_len += data_len;
+//
+//            /* __HAL_UART_CLEAR_FLAG(&huart2, UART_FLAG_RXNE);
+//            __HAL_UART_CLEAR_FLAG(&huart2, UART_FLAG_IDLE); */
+//            Bootloader_SendResponse(RESP_OK);
+//        }
+//        else if (cmd == CMD_END)
+//        {
+//            /* if (!Bootloader_ReceiveData((uint8_t *)&host_crc, 4, 100))
+//            {
+//                Bootloader_SendResponse(RESP_CRC_FAIL);
+//                return false;
+//            }
+//            if (!Bootloader_ReceiveData((uint8_t *)&host_size, 4, 100))
+//            {
+//                Bootloader_SendResponse(RESP_SIZE_FAIL);
+//                return false;
+//            } */
+//           host_crc = *(uint32_t *)&rx_buffer[1];
+//           host_size  = *(uint32_t *)&rx_buffer[5];
+//           if (cur_total_len != host_size)
+//            {
+//                Bootloader_SendResponse(RESP_SIZE_MISMATCH);
+//                return false;
+//            }
+//            calc_crc = Bootloader_CRC32((uint8_t *)APP_FLASH_STARTADDR, host_size);
+//            if (calc_crc == host_crc)
+//            {
+//                Bootloader_SendResponse(RESP_DONE);
+//                LED_OFF;
+//
+//                uint32_t clear = 0xffffffff;
+//                Flash_WriteBuffer(UPGRADE_FLAG_ADDR, (uint8_t *)&clear, 4);
+//                
+//                HAL_Delay(100);
+//                //Bootloader_JumpToApp();
+//
+//                return true;
+//            }
+//            else
+//            {
+//                Bootloader_SendResponse(RESP_FAIL);
+//                return false;
+//            }
+//        }
+//        else if (cmd == CMD_ABORT)
+//        {
+//            //Bootloader_SendResponse(RESP_OK);
+//            LED_OFF;
+//            return false;
+//        }
+//    }
+//}
+
 static bool Bootloader_Upgrade(void)
 {
-    uint8_t cmd;
-    uint8_t data_len;    //maxlen = 256bytes
-    uint32_t host_crc, host_size;
-    uint32_t calc_crc;
+    uint16_t frame_len;
+    uint8_t rx_buffer[RX_BUFFER_SIZE + 2];
 
-    bool data_received = false;
-    uint32_t start_tick;
-
-    LED_ON;
     cur_write_addr = APP_FLASH_STARTADDR;
     cur_total_len = 0;
 
     Flash_EraseApp();
-    start_tick = HAL_GetTick();
+
+    LED_OFF;
 
     while (1)
     {
-        HAL_IWDG_Refresh(&hiwdg);
-
-        if (!data_received && (HAL_GetTick() - start_tick > UPGRADE_WAIT_TIMEOUT_MS))
+        memset(rx_buffer, 0, RX_BUFFER_SIZE + 2);
+        
+        if (!Bootloader_ReceiveFrame(rx_buffer, &frame_len, 500))
         {
-            LED_OFF;
-            return false;
-        }
-
-        if (HAL_UART_Receive(&huart2, &cmd, 1, 100) != HAL_OK)
-        {
+            // 超时或出错，继续等待
             continue;
         }
-        LED_ON;
 
-        HAL_Delay(2000);
-
-        data_received = true;
+        uint8_t cmd = rx_buffer[0];
+        uint8_t data_len;
 
         if (cmd == CMD_DATA)
         {
-            if (!Bootloader_ReceiveData(&data_len, 1, 100))
-            {
-                Bootloader_SendResponse(RESP_LEN_FAIL);
-                continue;
-            }
-            if (data_len == 0 || data_len > RX_BUFFER_SIZE || (data_len % 4))
+            data_len = rx_buffer[1];
+            
+            if (data_len == 0 || data_len > RX_BUFFER_SIZE || (data_len % 4) != 0)
             {
                 Bootloader_SendResponse(RESP_LEN_ERR);
                 continue;
             }
-            if (!Bootloader_ReceiveData(rx_buffer, data_len, 500))
-            {
-                Bootloader_SendResponse(RESP_DATA_FAIL);
-                continue;
-            }
-            if (!Flash_WriteBuffer(cur_write_addr, rx_buffer, data_len))
+
+            if (!Flash_WriteBuffer(cur_write_addr, rx_buffer + 2, data_len))
             {
                 Bootloader_SendResponse(RESP_WRITE_FAIL);
                 continue;
             }
+
             cur_write_addr += data_len;
             cur_total_len += data_len;
+
             Bootloader_SendResponse(RESP_OK);
         }
         else if (cmd == CMD_END)
         {
-            if (!Bootloader_ReceiveData((uint8_t *)&host_crc, 4, 100))
-            {
-                Bootloader_SendResponse(RESP_CRC_FAIL);
-                return false;
-            }
-            if (!Bootloader_ReceiveData((uint8_t *)&host_size, 4, 100))
-            {
-                Bootloader_SendResponse(RESP_SIZE_FAIL);
-                return false;
-            }
+            uint32_t host_crc = *(uint32_t *)&rx_buffer[1];
+            uint32_t host_size = *(uint32_t *)&rx_buffer[5];
+
             if (cur_total_len != host_size)
             {
                 Bootloader_SendResponse(RESP_SIZE_MISMATCH);
                 return false;
             }
-            calc_crc = Bootloader_CRC32((uint8_t *)APP_FLASH_STARTADDR, host_size);
+
+            uint32_t calc_crc = Bootloader_CRC32((uint8_t *)APP_FLASH_STARTADDR, host_size);
             if (calc_crc == host_crc)
             {
                 Bootloader_SendResponse(RESP_DONE);
                 LED_OFF;
-
-                uint32_t clear = 0xffffffff;
+                uint32_t clear = 0xFFFFFFFF;
                 Flash_WriteBuffer(UPGRADE_FLAG_ADDR, (uint8_t *)&clear, 4);
-                
-                HAL_Delay(100);
-                Bootloader_JumpToApp();
-
                 return true;
             }
             else
             {
-                Bootloader_SendResponse(RESP_FAIL);
+                Bootloader_SendResponse(RESP_CRC_FAIL);
                 return false;
             }
         }
@@ -257,10 +418,7 @@ void Bootloader_MainLoop(void)
     if (*(__IO uint32_t *)UPGRADE_FLAG_ADDR == UPGRADE_FLAGE_MAGIC)
     {
         uint32_t clear = 0xffffffff;
-        Flash_WriteBuffer(UPGRADE_FLAG_ADDR, (uint8_t *)clear, 4);
-
-        LED_ON;
-        HAL_Delay(2000);
+        Flash_WriteBuffer(UPGRADE_FLAG_ADDR, (uint8_t *)&clear, 4);
         
         if (Bootloader_Upgrade())
         {
@@ -281,10 +439,7 @@ void Bootloader_MainLoop(void)
     LED_ON;
     while (1)
     {
-        HAL_IWDG_Refresh(&hiwdg);
-        
-        LED_ON;
-        HAL_Delay(2000);
+        //HAL_IWDG_Refresh(&hiwdg);
 
         uint8_t cmd;
         if (HAL_UART_Receive(&huart2, &cmd, 1, 100) == HAL_OK)

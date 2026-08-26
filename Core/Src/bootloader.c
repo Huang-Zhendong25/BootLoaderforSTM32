@@ -58,31 +58,31 @@ static void Bootloader_SendResponse(char *respText)
     HAL_GPIO_WritePin(RS485_EN1_GPIO_Port, RS485_EN1_Pin, GPIO_PIN_RESET);
 }
 
-static bool Bootloader_ReceiveData(uint8_t *data, uint16_t len, uint32_t timeout)
-{
-    /* uint32_t tick_start = HAL_GetTick();
-    uint16_t received_len = 0; */
-
-    /* while (received_len < len)
-    {
-        //HAL_IWDG_Refresh(&hiwdg);
-        if (HAL_GetTick() - tick_start > timeout)
-        {
-            return false;
-        }
-        if (HAL_UART_Receive(&huart2, &data[received_len], 1, 10) == HAL_OK)
-        {
-            received_len += 1;
-            tick_start = HAL_GetTick();
-        }
-    } */
-   HAL_GPIO_WritePin(RS485_EN1_GPIO_Port, RS485_EN1_Pin, GPIO_PIN_RESET);
-    if (HAL_UART_Receive(&huart2, data, len, timeout) == HAL_OK)
-    {
-        return true;
-    }
-    return false;
-}
+//static bool Bootloader_ReceiveData(uint8_t *data, uint16_t len, uint32_t timeout)
+//{
+//    /* uint32_t tick_start = HAL_GetTick();
+//    uint16_t received_len = 0; */
+//
+//    /* while (received_len < len)
+//    {
+//        //HAL_IWDG_Refresh(&hiwdg);
+//        if (HAL_GetTick() - tick_start > timeout)
+//        {
+//            return false;
+//        }
+//        if (HAL_UART_Receive(&huart2, &data[received_len], 1, 10) == HAL_OK)
+//        {
+//            received_len += 1;
+//            tick_start = HAL_GetTick();
+//        }
+//    } */
+//   HAL_GPIO_WritePin(RS485_EN1_GPIO_Port, RS485_EN1_Pin, GPIO_PIN_RESET);
+//    if (HAL_UART_Receive(&huart2, data, len, timeout) == HAL_OK)
+//    {
+//        return true;
+//    }
+//    return false;
+//}
 
 static bool Bootloader_ReceiveFrame(uint8_t *buffer, uint16_t *out_len, uint32_t timeout_ms)
 {
@@ -168,10 +168,10 @@ static bool isValid(void)
     {
         return false;
     }
-//    if ((app_resetHandler < 0x80000000u) || (app_resetHandler > 0x080fffffu))
-//    {
-//        return false;
-//    }
+    if ((app_resetHandler < 0x08000000u) || (app_resetHandler > 0x080fffffu))
+    {
+        return false;
+    }
     return true;
 }
 

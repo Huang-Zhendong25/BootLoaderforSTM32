@@ -51,6 +51,73 @@ static bool Flash_WriteBuffer(uint32_t addr, uint8_t *data, uint32_t len)
     return true;
 }
 
+static bool Flash_WriteUpgradeInfo(uint32_t addr, uint32_t page_start_addr, uint32_t page_num, UpgradeInfo_t *data)
+{
+    uint32_t erase_erro = 0;
+    //uint32_t page_addr_end = ((page_start_addr + size - 1) / 1024) * 1024;
+
+    FLASH_EraseInitTypeDef erase_init = {
+        .TypeErase = FLASH_TYPEERASE_PAGES,
+        .PageAddress = page_start_addr,
+        .NbPages = page_num,
+    };
+
+    HAL_FLASH_Unlock();
+    
+    if (HAL_FLASHEx_Erase(&erase_init, &erase_erro) != HAL_OK)
+    {
+        HAL_FLASH_Lock();
+        return false;
+    }
+
+    uint32_t data_len = sizeof(UpgradeInfo_t);
+    uint32_t word_num = data_len / 4;
+
+    for (uint32_t i = 0; i < word_num; i++)
+    {
+        uint32_t word = ((uint32_t *)data)[i];
+        
+        if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, addr + i * 4, word) != HAL_OK)
+        {
+            HAL_FLASH_Lock();
+            return false;
+        }
+    }
+
+    HAL_FLASH_Lock();
+
+    return true;
+}
+
+static void UpgradeState_Set(uint32_t state)
+{
+    UpgradeInfo_t UpgradeInfo;
+
+    UpgradeInfo.upgrade_flag = *(__IO uint32_t *)UPGRADE_FLAG_ADDR;
+    UpgradeInfo.upgrade_state = state;
+    //Flash_WriteBuffer(UPGRADE_STATE_FLASH_ADDR, (uint8_t *)&state, 4);
+    Flash_WriteUpgradeInfo(UPGRADE_FLAG_ADDR, UPGRADE_FLAG_ADDR, 1, &UpgradeInfo);
+}
+
+static uint32_t UpgradeState_Get(void)
+{
+    return *(__IO uint32_t *)UPGRADE_STATE_FLASH_ADDR;    //UPGRADE_FLAG_ADDR must be 4-byte aligned
+}
+
+static void UpgradeFlag_Clear(void)
+{
+    UpgradeInfo_t UpgradeInfo;
+
+    UpgradeInfo.upgrade_flag = UPGRADE_FLAG_CLEAR;
+    //UpgradeInfo.upgrade_state = *(__IO uint32_t *)UPGRADE_STATE_FLASH_ADDR;
+    UpgradeInfo.upgrade_state = UPGRADE_STATE_IDLE;
+    //uint32_t clear = UPGRADE_FLAG_CLEAR;
+    //Flash_WriteBuffer(UPGRADE_FLAG_ADDR, (uint8_t *)&clear, 4);    //clear upgrade flag
+    Flash_WriteUpgradeInfo(UPGRADE_FLAG_ADDR, UPGRADE_FLAG_ADDR, 1, &UpgradeInfo);
+    //HAL_Delay(100);
+    //UpgradeState_Set(UPGRADE_STATE_IDLE);     //upgrade idle after clear upgrade flag
+}
+
 static void Bootloader_SendResponse(char *respText)
 {
     HAL_GPIO_WritePin(RS485_EN1_GPIO_Port, RS485_EN1_Pin, GPIO_PIN_SET);
@@ -86,19 +153,23 @@ static void Bootloader_SendResponse(char *respText)
 
 static bool Bootloader_ReceiveFrame(uint8_t *buffer, uint16_t *out_len, uint32_t timeout_ms)
 {
-    //uint32_t start_tick = HAL_GetTick();
+    uint32_t start_tick = HAL_GetTick();
     uint16_t idx = 0;
-    uint8_t cmd;
-    uint8_t data_len;
+    uint8_t cmd = 0;
+    uint8_t data_len = 0;
+    //uint8_t expected_len = 0;
 
     HAL_GPIO_WritePin(RS485_EN1_GPIO_Port, RS485_EN1_Pin, GPIO_PIN_RESET);
 
     while (1)
     {
-        if (HAL_UART_Receive(&huart2, &buffer[idx], 1, 10) == HAL_OK)
+        if (HAL_GetTick() - start_tick > timeout_ms)    //a complete frame timeout
+        {
+            return false;
+        }
+        if (HAL_UART_Receive(&huart2, &buffer[idx], 1, 10) == HAL_OK)    //one byte timeout
         {
             idx += 1;
-            //start_tick = HAL_GetTick();
 
             if (idx == 1)
             {
@@ -127,7 +198,7 @@ static bool Bootloader_ReceiveFrame(uint8_t *buffer, uint16_t *out_len, uint32_t
                 }
                 else if (cmd == CMD_END)
                 {
-                    if (idx >= 10)
+                    if (idx >= 9)
                     {
                         *out_len = idx;
                         return true;
@@ -137,10 +208,6 @@ static bool Bootloader_ReceiveFrame(uint8_t *buffer, uint16_t *out_len, uint32_t
                 {}
             }
         }
-        /* if (HAL_GetTick() - start_tick > timeout_ms)
-        {
-            return false;
-        } */
     }
 }
 
@@ -161,6 +228,9 @@ static uint32_t Bootloader_CRC32(uint8_t *data, uint32_t len) {
 
 static bool isValid(void)
 {
+    if (UpgradeState_Get() != UPGRADE_STATE_IDLE)
+        return false;
+
     uint32_t app_stack_top = *(__IO uint32_t *)APP_FLASH_STARTADDR;
     uint32_t app_resetHandler = *(__IO uint32_t *)(APP_FLASH_STARTADDR + 4);
 
@@ -334,20 +404,33 @@ static bool Bootloader_Upgrade(void)
 {
     uint16_t frame_len;
     uint8_t rx_buffer[RX_BUFFER_SIZE + 2];
+    //uint32_t state;
+    uint8_t timeout_count = 0;
 
     cur_write_addr = APP_FLASH_STARTADDR;
     cur_total_len = 0;
 
     Flash_EraseApp();
+    UpgradeState_Set(UPGRADE_STATE_RECEIVING);    //state: receiving data frames
 
     LED_OFF;
 
     while (1)
     {
+        HAL_IWDG_Refresh(&hiwdg);
+        if (UpgradeState_Get() == UPGRADE_STATE_IDLE)    //if RECEIVING state was cleared
+        {
+            LED_ON;
+            return false;
+        }
+
         memset(rx_buffer, 0, RX_BUFFER_SIZE + 2);
         
         if (!Bootloader_ReceiveFrame(rx_buffer, &frame_len, 500))
         {
+            timeout_count += 1;
+            if (timeout_count >= 10)    //return after 500ms * 10 if no data is received
+                return false;
             // 超时或出错，继续等待
             continue;
         }
@@ -384,6 +467,8 @@ static bool Bootloader_Upgrade(void)
             if (cur_total_len != host_size)
             {
                 Bootloader_SendResponse(RESP_SIZE_MISMATCH);
+                UpgradeFlag_Clear();
+
                 return false;
             }
 
@@ -391,14 +476,21 @@ static bool Bootloader_Upgrade(void)
             if (calc_crc == host_crc)
             {
                 Bootloader_SendResponse(RESP_DONE);
-                LED_OFF;
-                uint32_t clear = 0xFFFFFFFF;
-                Flash_WriteBuffer(UPGRADE_FLAG_ADDR, (uint8_t *)&clear, 4);
-                return true;
+                LED_ON;
+                UpgradeFlag_Clear();
+                HAL_Delay(100);
+                
+                if (isValid())
+                {
+                    return true;
+                }
+                return false;
             }
             else
             {
                 Bootloader_SendResponse(RESP_CRC_FAIL);
+                UpgradeFlag_Clear();
+
                 return false;
             }
         }
@@ -406,6 +498,8 @@ static bool Bootloader_Upgrade(void)
         {
             Bootloader_SendResponse(RESP_OK);
             LED_OFF;
+            UpgradeFlag_Clear();
+
             return false;
         }
     }
@@ -414,8 +508,10 @@ static bool Bootloader_Upgrade(void)
 void Bootloader_MainLoop(void)
 {
     LED_OFF;
+    uint32_t upgrade_flag = *(__IO uint32_t *)UPGRADE_FLAG_ADDR;
+    uint32_t upgrade_state = UpgradeState_Get();
 
-    if (*(__IO uint32_t *)UPGRADE_FLAG_ADDR == UPGRADE_FLAGE_MAGIC)
+    /* if (*(__IO uint32_t *)UPGRADE_FLAG_ADDR == UPGRADE_FLAG_MAGIC)
     {
         uint32_t clear = 0xffffffff;
         Flash_WriteBuffer(UPGRADE_FLAG_ADDR, (uint8_t *)&clear, 4);
@@ -428,8 +524,31 @@ void Bootloader_MainLoop(void)
                 Bootloader_JumpToApp();
             }
         }
-    }
+    } */
     
+    //the process of receiving firmware data was interrupted unexpectly
+    if (upgrade_state == UPGRADE_STATE_RECEIVING && upgrade_flag != UPGRADE_FLAG_MAGIC)
+    {
+        UpgradeFlag_Clear();
+        UpgradeState_Set(UPGRADE_STATE_TRANS_INTERRUPTED);   //upgrade state: interrupted unexpectedly
+    }
+
+    //Firmware upgrade initiated by the APP
+    if (upgrade_flag == UPGRADE_FLAG_MAGIC)
+    {
+        UpgradeFlag_Clear();
+
+        if (Bootloader_Upgrade())
+        {
+            if (isValid())
+            {
+                HAL_Delay(100);
+                Bootloader_JumpToApp();
+            }
+        }
+    }
+
+    //the APP is functioning correctly, the bootloader jumps directly to the APP upon power-up
     if (isValid())
     {
         HAL_Delay(100);
@@ -437,14 +556,23 @@ void Bootloader_MainLoop(void)
     }
 
     LED_ON;
+    uint32_t last_led_toggle = HAL_GetTick();
+
     while (1)
     {
-        //HAL_IWDG_Refresh(&hiwdg);
+        HAL_IWDG_Refresh(&hiwdg);
 
-        uint8_t cmd;
-        if (HAL_UART_Receive(&huart2, &cmd, 1, 100) == HAL_OK)
+        if (HAL_GetTick() - last_led_toggle >= 200)
         {
-            if (cmd == CMD_DATA)
+            HAL_GPIO_TogglePin(LED_STATE_GPIO_Port, LED_STATE_Pin);
+            last_led_toggle = HAL_GetTick();
+        }
+
+        uint8_t start_upgrade_frame[UPGRADE_START_FRAME_LEN];
+        if (HAL_UART_Receive(&huart2, start_upgrade_frame, UPGRADE_START_FRAME_LEN, 100) == HAL_OK)
+        {
+            uint8_t cmd = start_upgrade_frame[UPGRADE_START_FRAME_CMD_INDEX];
+            if (cmd == UPGRADE_START_FRAME_CMD)
             {
                 if (Bootloader_Upgrade())
                 {

@@ -4,8 +4,8 @@
 #include "main.h"
 #include <stdint.h>
 
-#define APP_FLASH_STARTADDR     0x08006000
-#define APP_MAX_SIZE            0x00008000
+#define APP_FLASH_STARTADDR     0x08004000
+#define APP_MAX_SIZE            0x0000a000    //40kb -> 0x0800e000
 #define APP_MAX_PAGE_SIZE       32    //1kb * 32
 
 #define UPGRADE_FLAG_ADDR       0x0800f000
@@ -39,6 +39,10 @@
 #define RESP_DONE               "DONE"
 #define RESP_FAIL               "FAIL"
 
+#define RESP_BOOT_START         "BOOTSTART"
+#define RESP_WAIT_FOR_BOOT      "WAITFORBOOT"
+#define RESP_JUMP_TO_APP        "JUMPTOAPP"
+
 #define UPGRADE_START_FRAME_LEN         5
 #define UPGRADE_START_FRAME_CMD_INDEX   2
 #define UPGRADE_START_FRAME_CMD         0x45
@@ -54,6 +58,7 @@ typedef struct
     uint32_t upgrade_state;
 } UpgradeInfo_t;
 
+void Bootloader_SendResponse(char *respText);
 void Bootloader_MainLoop(void);
 
 #endif // !__BOOTLOADER_H

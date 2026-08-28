@@ -118,7 +118,7 @@ static void UpgradeFlag_Clear(void)
     //UpgradeState_Set(UPGRADE_STATE_IDLE);     //upgrade idle after clear upgrade flag
 }
 
-static void Bootloader_SendResponse(char *respText)
+void Bootloader_SendResponse(char *respText)
 {
     HAL_GPIO_WritePin(RS485_EN1_GPIO_Port, RS485_EN1_Pin, GPIO_PIN_SET);
     HAL_UART_Transmit(&huart2, (uint8_t *)respText, strlen(respText), 500);
@@ -404,8 +404,8 @@ static bool Bootloader_Upgrade(void)
 {
     uint16_t frame_len;
     uint8_t rx_buffer[RX_BUFFER_SIZE + 2];
-    //uint32_t state;
     uint8_t timeout_count = 0;
+    bool first_transmit = true;
 
     cur_write_addr = APP_FLASH_STARTADDR;
     cur_total_len = 0;
@@ -413,7 +413,7 @@ static bool Bootloader_Upgrade(void)
     Flash_EraseApp();
     UpgradeState_Set(UPGRADE_STATE_RECEIVING);    //state: receiving data frames
 
-    LED_OFF;
+    //LED_OFF;
 
     while (1)
     {
@@ -433,6 +433,12 @@ static bool Bootloader_Upgrade(void)
                 return false;
             // 超时或出错，继续等待
             continue;
+        }
+
+        if (first_transmit)
+        {
+            LED_OFF;
+            first_transmit = false;
         }
 
         uint8_t cmd = rx_buffer[0];
@@ -542,6 +548,7 @@ void Bootloader_MainLoop(void)
         {
             if (isValid())
             {
+                Bootloader_SendResponse(RESP_JUMP_TO_APP);
                 HAL_Delay(100);
                 Bootloader_JumpToApp();
             }
@@ -551,12 +558,14 @@ void Bootloader_MainLoop(void)
     //the APP is functioning correctly, the bootloader jumps directly to the APP upon power-up
     if (isValid())
     {
+        Bootloader_SendResponse(RESP_JUMP_TO_APP);
         HAL_Delay(100);
         Bootloader_JumpToApp();
     }
 
     LED_ON;
     uint32_t last_led_toggle = HAL_GetTick();
+    Bootloader_SendResponse(RESP_WAIT_FOR_BOOT);
 
     while (1)
     {

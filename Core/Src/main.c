@@ -95,6 +95,8 @@ int main(void)
   //uint8_t data1[5], data2 = 0xff;
   LED_ON;
   HAL_Delay(1000);
+  
+  Bootloader_SendResponse(RESP_BOOT_START);
 //  uint8_t pdata[] = "12";
 //  HAL_UART_Transmit(&huart2, pdata, 2, HAL_MAX_DELAY);
   Bootloader_MainLoop();

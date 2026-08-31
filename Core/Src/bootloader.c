@@ -505,6 +505,7 @@ static bool Bootloader_Upgrade(void)
             Bootloader_SendResponse(RESP_OK);
             LED_OFF;
             UpgradeFlag_Clear();
+            UpgradeState_Set(UPGRADE_STATE_ABORT);
 
             return false;
         }
@@ -516,21 +517,6 @@ void Bootloader_MainLoop(void)
     LED_OFF;
     uint32_t upgrade_flag = *(__IO uint32_t *)UPGRADE_FLAG_ADDR;
     uint32_t upgrade_state = UpgradeState_Get();
-
-    /* if (*(__IO uint32_t *)UPGRADE_FLAG_ADDR == UPGRADE_FLAG_MAGIC)
-    {
-        uint32_t clear = 0xffffffff;
-        Flash_WriteBuffer(UPGRADE_FLAG_ADDR, (uint8_t *)&clear, 4);
-        
-        if (Bootloader_Upgrade())
-        {
-            if (isValid())
-            {
-                HAL_Delay(100);
-                Bootloader_JumpToApp();
-            }
-        }
-    } */
     
     //the process of receiving firmware data was interrupted unexpectly
     if (upgrade_state == UPGRADE_STATE_RECEIVING && upgrade_flag != UPGRADE_FLAG_MAGIC)
@@ -556,11 +542,37 @@ void Bootloader_MainLoop(void)
     }
 
     //the APP is functioning correctly, the bootloader jumps directly to the APP upon power-up
-    if (isValid())
+    if (upgrade_flag == UPGRADE_FLAG_CLEAR && upgrade_state == UPGRADE_STATE_IDLE)
     {
-        Bootloader_SendResponse(RESP_JUMP_TO_APP);
-        HAL_Delay(100);
-        Bootloader_JumpToApp();
+        uint32_t start_tick = HAL_GetTick();
+        uint8_t start_upgrade_frame[UPGRADE_START_FRAME_LEN];
+        bool jump_to_app = true;
+        while (HAL_GetTick() - start_tick < UPGRADE_COMFIRM_JUMPTOAPP_TIMOEOUT_MS)   //break after 2s
+        {
+            HAL_IWDG_Refresh(&hiwdg);
+            Bootloader_SendResponse(RESP_COMFIRM_JUMP_TO_APP);
+            if (HAL_UART_Receive(&huart2, start_upgrade_frame, UPGRADE_START_FRAME_LEN, 100) == HAL_OK)
+            {
+                uint8_t cmd = start_upgrade_frame[UPGRADE_START_FRAME_CMD_INDEX];
+                //there may be an error int the app, so it need to confirm manually 
+                //whether to jump to app or wait for the firmware upgrade
+                if (cmd == UPGRADE_START_FRAME_CMD)
+                {
+                    //UpgradeState_Set(UPGRADE_STATE_WATING_UPGRADE);
+                    jump_to_app = false;
+                    break;
+                }
+            }
+        }
+        if (upgrade_flag == UPGRADE_FLAG_CLEAR && upgrade_state == UPGRADE_STATE_IDLE && jump_to_app)
+        {
+            if (isValid())
+            {
+                Bootloader_SendResponse(RESP_JUMP_TO_APP);
+                HAL_Delay(100);
+                Bootloader_JumpToApp();
+            }
+        }
     }
 
     LED_ON;

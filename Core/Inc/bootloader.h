@@ -16,11 +16,14 @@
 //#define UPGRADE_STATE_FLASH_ADDR    0x0800f400
 #define UPGRADE_STATE_IDLE              0xffffffff
 #define UPGRADE_STATE_RECEIVING         0xaaaaaaaa
+#define UPGRADE_STATE_ABORT             0xbbbbbbbb
 #define UPGRADE_STATE_TRANS_INTERRUPTED 0xcccccccc
+#define UPGRADE_STATE_WATING_UPGRADE    0xdddddddd
 //#define UPGRADE_STATE_CRC       0x55555555
 
 //#define UPGRADE_WAIT_TIMEOUT_MS             3000
 #define UPGRADE_RECEIVE_FRAME_TIMEOUT_MS    500
+#define UPGRADE_COMFIRM_JUMPTOAPP_TIMOEOUT_MS   2000
 
 #define CMD_DATA                0x01
 #define CMD_END                 0x02
@@ -39,9 +42,10 @@
 #define RESP_DONE               "DONE"
 #define RESP_FAIL               "FAIL"
 
-#define RESP_BOOT_START         "BOOTSTART"
-#define RESP_WAIT_FOR_BOOT      "WAITFORBOOT"
-#define RESP_JUMP_TO_APP        "JUMPTOAPP"
+#define RESP_BOOT_START             "BOOTSTART"
+#define RESP_WAIT_FOR_BOOT          "WAITFORBOOT"
+#define RESP_JUMP_TO_APP            "JUMPTOAPP"
+#define RESP_COMFIRM_JUMP_TO_APP    "COMFIRM"
 
 #define UPGRADE_START_FRAME_LEN         5
 #define UPGRADE_START_FRAME_CMD_INDEX   2

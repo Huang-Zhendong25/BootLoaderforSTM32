@@ -547,6 +547,7 @@ void Bootloader_MainLoop(void)
         uint32_t start_tick = HAL_GetTick();
         uint8_t start_upgrade_frame[UPGRADE_START_FRAME_LEN];
         bool jump_to_app = true;
+
         while (HAL_GetTick() - start_tick < UPGRADE_COMFIRM_JUMPTOAPP_TIMOEOUT_MS)   //break after 2s
         {
             HAL_IWDG_Refresh(&hiwdg);
